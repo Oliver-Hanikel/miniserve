@@ -57,7 +57,7 @@ strum = { version = "0.24", features = ["derive"] }
 tar = "0.4"
 thiserror = "1"
 yansi = "0.5"
-zip = { version = "0.6.2", default-features = false }
+streaming-zip = "0.5"
 
 [features]
 default = ["tls"]

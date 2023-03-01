@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use actix_web::http::header::ContentEncoding;
 use libflate::gzip::Encoder;
 use serde::Deserialize;
+use streaming_zip;
 use strum::{Display, EnumIter, EnumString};
 use tar::Builder;
-use zip::{write, ZipWriter};
 
 use crate::errors::ContextualError;
 
@@ -202,134 +202,15 @@ where
 /// ├── f
 /// └── g
 /// ```
-fn create_zip_from_directory<W>(
-    out: W,
-    directory: &Path,
-    skip_symlinks: bool,
-) -> Result<(), ContextualError>
-where
-    W: std::io::Write + std::io::Seek,
+fn zip_dir<W: Write>(dir: &Path, skip_symlinks: bool, out: W) -> Result<(), ContextualError>
 {
-    let options = write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
-    let mut paths_queue: Vec<PathBuf> = vec![directory.to_path_buf()];
-    let zip_root_folder_name = directory.file_name().ok_or_else(|| {
-        ContextualError::InvalidPathError("Directory name terminates in \"..\"".to_string())
-    })?;
-
-    let mut zip_writer = ZipWriter::new(out);
-    let mut buffer = Vec::new();
-    while !paths_queue.is_empty() {
-        let next = paths_queue.pop().ok_or_else(|| {
-            ContextualError::ArchiveCreationDetailError("Could not get path from queue".to_string())
-        })?;
-        let current_dir = next.as_path();
-        let directory_entry_iterator = std::fs::read_dir(current_dir)
-            .map_err(|e| ContextualError::IoError("Could not read directory".to_string(), e))?;
-        let zip_directory = Path::new(zip_root_folder_name).join(
-            current_dir.strip_prefix(directory).map_err(|_| {
-                ContextualError::ArchiveCreationDetailError(
-                    "Could not append base directory".to_string(),
-                )
-            })?,
-        );
-
-        for entry in directory_entry_iterator {
-            let entry_path = entry
-                .ok()
-                .ok_or_else(|| {
-                    ContextualError::InvalidPathError(
-                        "Directory name terminates in \"..\"".to_string(),
-                    )
-                })?
-                .path();
-            let entry_metadata = std::fs::metadata(entry_path.clone()).map_err(|e| {
-                ContextualError::IoError("Could not get file metadata".to_string(), e)
-            })?;
-
-            if entry_metadata.file_type().is_symlink() && skip_symlinks {
-                continue;
-            }
-            let current_entry_name = entry_path.file_name().ok_or_else(|| {
-                ContextualError::InvalidPathError("Invalid file or directory name".to_string())
-            })?;
-            if entry_metadata.is_file() {
-                let mut f = File::open(&entry_path)
-                    .map_err(|e| ContextualError::IoError("Could not open file".to_string(), e))?;
-                f.read_to_end(&mut buffer).map_err(|e| {
-                    ContextualError::IoError("Could not read from file".to_string(), e)
-                })?;
-                let relative_path = zip_directory.join(current_entry_name).into_os_string();
-                zip_writer
-                    .start_file(relative_path.to_string_lossy(), options)
-                    .map_err(|_| {
-                        ContextualError::ArchiveCreationDetailError(
-                            "Could not add file path to ZIP".to_string(),
-                        )
-                    })?;
-                zip_writer.write(buffer.as_ref()).map_err(|_| {
-                    ContextualError::ArchiveCreationDetailError(
-                        "Could not write file to ZIP".to_string(),
-                    )
-                })?;
-                buffer.clear();
-            } else if entry_metadata.is_dir() {
-                let relative_path = zip_directory.join(current_entry_name).into_os_string();
-                zip_writer
-                    .add_directory(relative_path.to_string_lossy(), options)
-                    .map_err(|_| {
-                        ContextualError::ArchiveCreationDetailError(
-                            "Could not add directory path to ZIP".to_string(),
-                        )
-                    })?;
-                paths_queue.push(entry_path.clone());
-            }
-        }
-    }
-
-    zip_writer.finish().map_err(|_| {
-        ContextualError::ArchiveCreationDetailError(
-            "Could not finish writing ZIP archive".to_string(),
-        )
-    })?;
-    Ok(())
-}
-
-/// Writes a zip of `dir` in `out`.
-///
-/// The content of `src_dir` will be saved in the archive as the  folder named .
-fn zip_data<W>(src_dir: &Path, skip_symlinks: bool, mut out: W) -> Result<(), ContextualError>
-where
-    W: std::io::Write,
-{
-    let mut data = Vec::new();
-    let memory_file = Cursor::new(&mut data);
-    create_zip_from_directory(memory_file, src_dir, skip_symlinks).map_err(|e| {
-        ContextualError::ArchiveCreationError(
-            "Failed to create the ZIP archive".to_string(),
-            Box::new(e),
-        )
-    })?;
-
-    out.write_all(data.as_mut_slice())
-        .map_err(|e| ContextualError::IoError("Failed to write the ZIP archive".to_string(), e))?;
+    // TODO: implement skip_symlinks (I don't know the current behaviour)
+    // TODO: improve Error handling (and ContextualError::ZipError)
+    let mut zip_writer = streaming_zip::Archive::new(out);
+    zip_writer
+        .add_dir_all(dir.file_name().unwrap(), dir, streaming_zip::CompressionMode::Deflate(3), false)
+        .map_err(|e| { ContextualError::ZipError })?;
+    zip_writer.finish().map_err(|e| { ContextualError::ZipError })?;
 
     Ok(())
-}
-
-fn zip_dir<W>(dir: &Path, skip_symlinks: bool, out: W) -> Result<(), ContextualError>
-where
-    W: std::io::Write,
-{
-    let inner_folder = dir.file_name().ok_or_else(|| {
-        ContextualError::InvalidPathError("Directory name terminates in \"..\"".to_string())
-    })?;
-
-    inner_folder.to_str().ok_or_else(|| {
-        ContextualError::InvalidPathError(
-            "Directory name contains invalid UTF-8 characters".to_string(),
-        )
-    })?;
-
-    zip_data(dir, skip_symlinks, out)
-        .map_err(|e| ContextualError::ArchiveCreationError("zip".to_string(), Box::new(e)))
 }
