@@ -205,12 +205,14 @@ where
 fn zip_dir<W: Write>(dir: &Path, skip_symlinks: bool, out: W) -> Result<(), ContextualError>
 {
     // TODO: implement skip_symlinks (I don't know the current behaviour)
-    // TODO: improve Error handling (and ContextualError::ZipError)
     let mut zip_writer = streaming_zip::Archive::new(out);
+
+    let dir_name = dir.file_name().ok_or(ContextualError::InvalidPathError(format!("Could not get the directory name of {:?}", dir)))?;
+    let dir_path = dir.to_str().ok_or(ContextualError::InvalidPathError(format!("Could not get the path of {:?}", dir)))?;
     zip_writer
-        .add_dir_all(dir.file_name().unwrap(), dir, streaming_zip::CompressionMode::Deflate(3), false)
-        .map_err(|e| { ContextualError::ZipError })?;
-    zip_writer.finish().map_err(|e| { ContextualError::ZipError })?;
+        .add_dir_all(dir_name, dir, streaming_zip::CompressionMode::Deflate(3), false)
+        .map_err(|e| { ContextualError::ArchiveCreationError("ZIP".to_string(), Box::new(ContextualError::IoError(format!("Failed to append the content of {} to the ZIP archive", dir_path), e))) })?;
+    zip_writer.finish().map_err(|e| { ContextualError::ArchiveCreationError("ZIP finish".to_string(), Box::new(ContextualError::IoError( "Failed to finish writing to the ZIP archive".to_string(), e))) })?;
 
     Ok(())
 }

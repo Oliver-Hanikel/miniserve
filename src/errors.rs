@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use actix_web::{
     body::{BoxBody, MessageBody},
     dev::{ResponseHead, Service, ServiceRequest, ServiceResponse},
@@ -82,11 +83,7 @@ Please set an explicit serve path like: `miniserve /my/path`")]
 
     /// In case miniserve was invoked with --no-symlinks but the serve path is a symlink
     #[error("The -P|--no-symlinks option was provided but the serve path '{0}' is a symlink")]
-    NoSymlinksOptionWithSymlinkServePath(String),
-
-    /// ZipError
-    #[error("Test")]
-    ZipError
+    NoSymlinksOptionWithSymlinkServePath(String)
 }
 
 impl ResponseError for ContextualError {
